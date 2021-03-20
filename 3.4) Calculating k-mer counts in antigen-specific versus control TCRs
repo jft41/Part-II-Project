@@ -1,0 +1,191 @@
+library(limma)
+library(tidyverse)
+library(ggrepel)
+library(data.table)
+
+#Set k as length of k-mer
+k<-3
+
+#Function that returns kmers for any given CDR3
+return_non_positional_kmers <- function(cdr3){
+
+  #No of kmers for given CDR3
+  no_of_kmers <- nchar(cdr3)+1-k
+
+  #List of kmers
+  kmer_list <- substr(rep(cdr3, no_of_kmers), 1:no_of_kmers, k:nchar(cdr3))
+  kmer_list
+}
+    
+setwd('...')
+
+#Load disease status of patients used in MIRA analysis
+patient.data <- fread(disease_status_of_Dataset_C_patients)
+
+#Load MHC-1 data, which is output of MIRA analysis and contains CDR3s of TCRs that bind SARS-CoV-2 antigens
+DT <- fread('CDR3s_of_TCRs_binding_SARS-CoV-2_antigens', check.names=T)
+
+#Make new column with antigen name
+DT$Antigen <- as.factor(paste0(DT$Start.Index.in.Genome, '-', DT$End.Index.in.Genome))
+DT$Experiment <- as.factor(DT$Experiment)
+
+#Subset patient data to only include patients used in the MHC-1 experiment
+patients <- levels(DT$Experiment)
+patients_in_DatasetC <- patient.data[patient.data$Experiment %in% patients,]
+
+#Does each experiment equal a patient?
+length(patients) == nrow(patients_in_DT)
+
+fwrite(patients_in_DatasetC, 'MHCI_convalescent_covid_patients_defining_dataset_c')
+
+#Only want to use TCR sequences extracted from peripheral blood mononuclear cells (PBMCs) 
+PBMC_patient_data <- patients_in_DT[patients_in_DT$Cell.Type == 'PBMC',]
+
+#Only want to use convalescent COVID-19 (Dataset C) data 
+Convalescent_patient_data <-PBMC_patient_data[PBMC_patient_data$Cohort == 'COVID-19-Convalescent',]
+
+conv.cov.patients <- Convalescent_patient_data$Experiment
+
+#Only want to include PBMC data (mostly T cells) 
+DT <- DT[DT$Experiment %in% c(conv.cov.patients),]
+
+#Add column containing CDR3s
+cdr3s <- strsplit2(DT$TCR.BioIdentity, '\\+')[,1]
+length(cdr3s) == nrow(DT)
+DT[, CDR3 := cdr3s]
+
+#Remove unproductive CDR3s
+DT <- DT[DT$CDR3 != 'unproductive',]
+
+#Remove CDR3s containing a *
+DT <- DT[!grep('\\*', DT$CDR3),]
+
+#Only keep cdr3s which are ≥ k
+DT <- DT[nchar(DT$CDR3) >= k,]
+table(nchar(DT$CDR3))
+
+#DATA OBTAINED THAT MAPS TCR SEQUENCES TO SARS-CoV-2 antigens
+covid.data <- DT[DT$Experiment %in% conv.cov.patients,]
+fwrite(covid.data, 'peptide-detail-ci_CONVALESCENT_COVID_DATA.csv')
+
+#4 antigens of interest (have highest number of total TCRB CDR3s binding them in MIRA assay) 
+orf1ab <- '5171-5203'
+nucleocapsid_phosphoprotein_1 <- '28583-28612'
+nucleocapsid_phosphoprotein_2 <- '29186-29230'
+nucleocapsid_phosphoprotein_3 <- '29348-29380'
+
+dk3mers <- read_csv('significantly_enriched-3-mers_in_both_datasets')
+dk3mers <- dk3mers$kmer %>% as.vector()
+
+
+set.seed(7)
+antigens <-  c(orf1ab, nucleocapsid_phosphoprotein_1, nucleocapsid_phosphoprotein_2, nucleocapsid_phosphoprotein_3)
+
+
+#Create 3-mers for control TCRs, 
+for (a in antigens){
+  
+protein <- ifelse(a == orf1ab, 'orf1ab_', 'nucleocapsid_phosphoprotein_')
+label <- paste0(protein, a)
+
+#Get datatable of all CDR3 identified to bind antigen in MIRA
+cov.antigen.DT <- covid.data[covid.data$Antigen == a,]
+
+#make k-mers of Dataset 
+antigen_3mers <- lapply(cov.antigen.DT$CDR3, return_non_positional_kmers) %>% unlist %>% table %>% as_tibble()
+
+#Make nice
+colnames(antigen_3mers) <-  c('kmer', 'CoV_count')
+antigen_3mers <- antigen_3mers %>% arrange(desc(CoV_count))
+
+
+#Load Controls (Dataset D) 
+control_Cdr3s <- readRDS('/Users/juju7007thorn/Downloads/Control_naive_CD8_TCRB_CDR3s.rds')
+
+#Only keep cdr3s which are ≥ k
+control_Cdr3s <- control_Cdr3s[nchar(control_Cdr3s) >=k]
+table(nchar(control_Cdr3s))
+
+#####Now make a control cohort
+no_of_cdr3_in_cov.antigen.DT <- length(cov.antigen.DT$CDR3)
+
+
+#Match CDR3 lengths 
+control_cdr3s_sample <- vector(mode = 'character', length = no_of_cdr3_in_cov.antigen.DT)
+for (i in 1:no_of_cdr3_in_cov.antigen.DT){
+chars.in.i.cdr3 <- nchar(cov.antigen.DT$CDR3[i])
+#Get all cdr3s in controls that have correct length
+temp.control.cdr3s <- control_Cdr3s[nchar(control_Cdr3s) == chars.in.i.cdr3]
+temp_cdr3 <- sample(temp.control.cdr3s,1)
+#Make sure cdr3 is not already chosen
+while(temp_cdr3 %in% control_cdr3s_sample){
+temp_cdr3 <- sample(temp.control.cdr3s,1)
+}
+control_cdr3s_sample[i] <- temp_cdr3
+print(i)
+}
+mean(nchar(cov.antigen.DT$CDR3)) == mean(nchar(control_cdr3s_sample))
+write_csv(as_tibble(control_cdr3s_sample), paste0(label, '_length_matched_control_cdr3s.csv'))
+######
+
+#make 3mers from the control CDR3s of Dataset D, tabulate and return tibble
+control_3mers <- lapply(control_cdr3s_sample, return_non_positional_kmers) %>% unlist %>% table %>% as_tibble()
+
+#Make nice
+colnames(control_3mers) <-  c('kmer', 'Control_count')
+control_3mers <- control_3mers %>% arrange(desc(Control_count))
+
+#Save
+#write_csv(control_3mers, paste0(label, '_CONTROL_3mers.csv'))
+
+#Save csv of the counts of each k-mer in convalescent COVID-19 TCRs (Dataset C) versus control TCRs (Dataset D) 
+combined_data <- full_join(antigen_3mers,control_3mers, by = 'kmer')
+combined_data$CoV_count[is.na(combined_data$CoV_count)] <- 0
+combined_data$Control_count[is.na(combined_data$Control_count)] <- 0
+combined_data$CoV_Rank[is.na(combined_data$CoV_Rank)] <- max(combined_data$CoV_Rank, na.rm = T) + 100
+combined_data$Control_Rank[is.na(combined_data$Control_Rank)] <- max(combined_data$Control_Rank, na.rm = T) + 100
+
+write_csv(combined_data, paste0(label, '_3mers_all_data.csv'))
+
+#Define enriched k-mers as those that have a count in COVID-19 that is more than 1.5 of that in controls and have at least a count of 10 in COVID-19 sample
+
+enriched_dk3mers <-  combined_data[combined_data$kmer %in% dk3mers,]
+enriched_dk3mers <- enriched_dk3mers[enriched_dk3mers$CoV_count >= enriched_dk3mers$Control_count*1.5,]
+enriched_dk3mers <- enriched_dk3mers[enriched_dk3mers$CoV_count >= 10,]
+enriched_dk3mers <- enriched_dk3mers$kmer %>% as.vector()
+
+#Save CSV of k-mers that are 1) enriched in Dataset A, 2) Enriched in Dataset B and 3) present in k-mers of Dataset C and D
+red_data <- combined_data[combined_data$kmer %in% dk3mers,]
+dim(red_data)
+write_csv(red_data, 'red_data.csv')
+
+write_csv(combined_data, 'grey_and_red.csv')
+dim(combined_data)
+
+#Make scatter plot that plots counts of k-mers eriched in both Dataset A and B in COVID-19 antigen-associated TCRs (Dataset C) and controls (Dataset D) 
+ggplot(combined_data, aes(x = Control_count, y = CoV_count)) +
+  geom_abline(intercept = 0, linetype="dashed", 
+              color = "dimgray", size=0.25) +
+   geom_point(colour = "slategray4", size = 0.65) +
+  geom_point(data=red_data,alpha = 0.7,  size = 0.625, colour='red') +
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  geom_label_repel( data=combined_data %>% filter(kmer %in% enriched_dk3mers), # Filter data first
+                    aes(label=kmer), colour = "black", min.segment.length = 0, point.padding = 0.1, size = 7, force = 50,
+                   segment.color = 'black', segment.size = 0.25,  box.padding   = 0.35,
+                  nudge_y      = 1.5, nudge_x      = -0.3) +
+  coord_cartesian(clip = 'off', expand = T) +
+  theme_minimal() +
+  ylab('SARS-CoV-2 (counts)') +
+  xlab('Controls (counts)') +
+  ggtitle(paste0('3mers counts ', label)) +
+  theme(plot.title = element_text(size = 11, face = "bold"),
+        axis.title.x = element_text(size = 14, face = "bold"),
+        axis.title.y = element_text(face = 'bold', size = 14),
+        axis.text.x = element_text(face="bold", size=12),#, angle = 45,  vjust = 1, hjust=1),
+        axis.text.y = element_text(face="bold", size=12))
+
+ggsave(paste0(label, '_kmer_count_plot.pdf'), width = 13.5, height = 12, units = "cm")
+
+ }
+ 
