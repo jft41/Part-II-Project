@@ -1,0 +1,145 @@
+library(tidyverse)
+library(ggrepel)
+
+#Set working directory
+setwd('...')
+
+#Set file directory
+file.dir <- 'Dataset A k-mer matrices (repeaat for Dataset B)'
+files <- list.files(file.dir, pattern='.csv')
+
+#For loop applied to each length of i (i = 1 refers to 3-mer matrices, i = 2 refers to 4mer matrices, i = 5 refers to 5mer matrices) 
+for (i in seq_along(files)){
+  label <- strsplit(files[i], split = '.csv')[[1]][1]
+  
+  #Load the relevant data from file directory
+  DF <- read.csv(paste0(file.dir,files[i]), row.names=1)
+  head(DF)
+  
+  #Normalise the data (divide kmer counts by columns sum)
+  DF <- apply(DF, MARGIN = 2, function(x) x/sum(x, na.rm=TRUE) )
+  
+  #Create tibble to store summary data
+  summary_DF <- tibble(kmer = rownames(DF), Mean_all = 0, SD = 0, CV = 0, mean_HD = 0, mean_Pt = 0, SD_HD = 0, SD_Pt = 0, LOG2_Fold_enrichment_Pt_vs_HD = 0, tt_p_value = 0, adj.P.val.BH = 0, adj.P.val.bonferroni = 0)
+  
+  #Calculates mean frequency of each row/k-mer
+  summary_DF$Mean_all <- rowMeans(DF)
+  
+  #Calculates standard deviation of each row/k-mer
+  summary_DF$SD <- apply(DF, MARGIN = 1, sd)
+  
+  #Calculate coefficient of variation
+  summary_DF$CV <- summary_DF$Mean_all/summary_DF$SD*100
+  
+  #Define disease groups (Pt = convalescent COVID-19 cohort,  HD = control cohort
+  group1 <- colnames(DF)[grep('HD', colnames(DF))]
+  group2 <- colnames(DF)[grep('Pt', colnames(DF))]
+  
+  #Calculate key stats
+  summary_DF$mean_HD <- rowMeans(DF[,group1])
+  summary_DF$mean_Pt <- rowMeans(DF[,group2])
+  summary_DF$SD_HD <- apply(DF[,group1], MARGIN = 1, sd)
+  summary_DF$SD_Pt <- apply(DF[,group2], MARGIN = 1, sd)
+  
+  ########## Perform T tests for each k-mer, looking for significant increase in k-mer count in convalescent COVID-19 cohort versus control cohort for Dataset A and then B  
+  # for (r in 1:nrow(DF)){
+  #   temp.tt.dat <- t.test(x=DF[r,group1], y = DF[r,group2])
+  #   summary_DF$tt_p_value[r] <- temp.tt.dat$p.value
+  # }
+  
+  # Create one-sided T test function #
+  t.test2 <- function(m1,m2,s1,s2,n1,n2, greater_in_m1, m0=0,equal.variance=FALSE)
+  {
+    if( equal.variance==FALSE ) 
+    {
+      se <- sqrt( (s1^2/n1) + (s2^2/n2) )
+      # welch-satterthwaite df
+      df <- ( (s1^2/n1 + s2^2/n2)^2 )/( (s1^2/n1)^2/(n1-1) + (s2^2/n2)^2/(n2-1) )
+    } else
+    {
+      # pooled standard deviation, scaled by the sample sizes
+      se <- sqrt( (1/n1 + 1/n2) * ((n1-1)*s1^2 + (n2-1)*s2^2)/(n1+n2-2) ) 
+      df <- n1+n2-2
+    }      
+    t <- (m1-m2-m0)/se 
+    # dat <- c(m1-m2, se, t, 2*pt(-abs(t),df))    
+    # names(dat) <- c("Difference of means", "Std Error", "t", "p-value")
+    
+    #For two-sided
+    # dat <- 2*pt(-abs(t),df)
+    
+    #For one-sided (greater in m1)
+    dat <- abs(greater_in_m1-pt(abs(t),df))
+    
+    return(dat) 
+  }
+  
+  #Apply one-sided T-test function to calculated values above
+  summary_DF$tt_p_value <- t.test2(m1 = summary_DF$mean_Pt,
+                                   m2 = summary_DF$mean_HD,
+                                   s1 = summary_DF$SD_Pt,
+                                   s2 = summary_DF$SD_HD,
+                                   n1 = length(group2),
+                                   n2 = length(group1),
+                                   greater_in_m1 = summary_DF$mean_Pt > summary_DF$mean_HD)
+ ######### 
+  #Calculate adjusted P values
+  summary_DF$adj.P.val.BH <-  p.adjust(summary_DF$tt_p_value, method = "BH")
+  summary_DF$adj.P.val.bonferroni <-  p.adjust(summary_DF$tt_p_value, method = "bonferroni")
+  
+  #Calculate fold changes
+  summary_DF$LOG2_Fold_enrichment_Pt_vs_HD <- log2(summary_DF$mean_Pt/summary_DF$mean_HD)
+  
+  #Save summary data as CV file
+  write_csv(x = summary_DF, file = paste0(label, '_DKmer_details.csv'))
+  
+  # Assign colours to data based on p value
+  ### p > 0.05 means grey
+  ### p <0.05 means red
+  
+  #Filter data into < 0.05 (significant k-mers, colour red) and >0.05 (non-significant k-mers, colour grey) for p value 
+  summary_DF %>%
+  arrange(tt_p_value) %>%
+  mutate(label = replace(kmer, row_number() > 10, ''), 
+         color = case_when(tt_p_value < 0.05 ~ 'p value < 0.05', 
+                           TRUE~'p value > 0.05')) -> data1
+
+ significant_datasetA_kmers<- data1 %>% 
+  filter(color == 'p value < 0.05')
+
+NOT_significant_DatasetA_kmers <- data1 %>% 
+  filter(color == 'p value > 0.05')
+
+#Create volcano plot
+imap(labels_plot, function(x, y) {
+#Create 'overlapping-kmers' (k-mers that are enriched in both Dataset A and B rather than one or the other) and colour green
+  green_data <- data1 %>% inner_join(x, by = 'kmer') %>% mutate(color = 'overlaping-kmers')
+  write_csv(green_data, paste0(y, '_average_p_value.csv'))
+  label_data <- green_data %>% arrange(p_value) %>% head(10)
+  
+  #Make volcano plot
+  plot1 <- ggplot(data=data1, mapping = aes(LOG2_Fold_enrichment_Pt_vs_HD, Mean_all)) +
+    geom_point(data = NOT_significant_DatasetA_kmers, aes(colour = color), alpha = 0.5, size = 1)  +
+    geom_point(data = significant_DatasetA_kmers, aes(colour = color), alpha = 0.9, size = 1) + 
+    geom_point(data = green_data, aes(colour = color), size = 1) + 
+    scale_color_manual(values = c("p value < 0.05" = "red", "p value > 0.05" = "grey", 'overlaping-kmers' = 'green')) + 
+    
+    coord_cartesian(xlim = c(-6, 6), ylim = c(0, 0.005), expand = TRUE, default= FALSE, clip = "on" ) +
+    ggtitle(paste0(y, ' enrichment in COVID-19 samples')) + xlab('Log2 fold enrichment in COVID-19') + ylab('Mean frequency') +
+    theme_minimal() +
+    geom_label_repel(data = label_data, aes(label=kmer), colour = "black", min.segment.length = 0, point.padding = 0.1, size = 7, force = 1300,
+                     segment.color = 'black', segment.size = 0.1,  box.padding   = 0.5,
+                     nudge_x = 0, nudge_y = 0.0045) +
+    
+    theme(plot.title = element_text(size = 12, face = "bold"),
+          axis.title.x = element_text(size = 14, face = "bold"),
+          axis.title.y = element_text(face = 'bold', size = 14),
+          axis.text.x = element_text(face="bold", size=12),
+          axis.text.y = element_text(face="bold", size=12)) 
+  
+  ggsave(paste0(y, '_volcano_plot.png'), plot1, dpi = 300, width = 20, height = 13, units = "cm")
+})
+
+#Unhash if looping through files
+}
+
