@@ -1,0 +1,103 @@
+# Visualising average atchley factor profiles for kmers of each antigen 
+library(HDMD)
+library(tidyverse)
+library(vegan)
+library(gplots)
+library(RColorBrewer)
+library(factoextra)
+library(NbClust)
+
+setwd('/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/New_Cluster_Wd')
+
+# Load antigen-associated 3mer dfs and keep only kmers with CoV_count >0
+ORF1ab_3mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos3mer/orf1ab_5171-5203_3mers_all_data.csv") %>% 
+  filter(CoV_count>0) 
+NC230_3mer<- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos3mer/nucleocapsid_phosphoprotein_29186-29230_3mers_all_data.csv") %>% 
+  filter(CoV_count >0) 
+NC380_3mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos3mer/nucleocapsid_phosphoprotein_29348-29380_3mers_all_data.csv") %>% 
+  filter(CoV_count >0) 
+NC612_3mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos3mer/nucleocapsid_phosphoprotein_28583-28612_3mers_all_data.csv") %>% 
+  filter(CoV_count >0) 
+
+list_3mer <- lst(ORF1ab_3mer,NC230_3mer,NC380_3mer, NC612_3mer)
+
+# Load antigen-associated 4mer dfs and keep only kmers with CoV_count >0
+ORF1ab_4mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_4mer/orf1ab_5171-5203_4mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC230_4mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_4mer/nucleocapsid_phosphoprotein_29186-29230_4mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC380_4mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_4mer/nucleocapsid_phosphoprotein_29348-29380_4mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC612_4mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_4mer/nucleocapsid_phosphoprotein_28583-28612_4mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+  
+list_4mer <- lst(ORF1ab_4mer, NC230_4mer, NC380_4mer, NC612_4mer)
+
+
+# Load antigen-associated 5mer dfs and keep only kmers with CoV_count >0
+ORF1ab_5mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_5mer/orf1ab_5171-5203_5mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC230_5mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_5mer/nucleocapsid_phosphoprotein_29186-29230_5mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC380_5mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_5mer/nucleocapsid_phosphoprotein_29348-29380_5mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+NC612_5mer <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/MIRA_analysis_of_CD4_Adaptive_Data/MIRA_output_non_pos_5mer/nucleocapsid_phosphoprotein_28583-28612_5mers_all_data.csv") %>% 
+  filter(CoV_count >0)
+
+list_5mer <- lst(ORF1ab_5mer, NC230_5mer, NC380_5mer, NC612_5mer)
+
+
+# Function to turn kmer into an atchley factor
+kmer2atchley <- function(kmer){
+amino <- as.list(strsplit(kmer,"")[[1]]) #Each amino acid to a list element
+atchley <- unlist(lapply(amino, function(x) AAMetric.Atchley[x,])) #Atchley factors for each AA into vector
+len <- nchar(kmer) #Number of AAs in kmer
+names(atchley) <- paste(rep(1:len, each = 5), names(atchley), sep = ".") #Names for each element in actchley vector
+return(atchley)
+}
+kmer2atchley("CASSL")
+
+# Calculate ratio of CoV_count/control_count
+# Assign kmers into groups based on : ratio>1.25, ratio 1.25-1.20, ratio 1.20-1.15, ratio 1.15-1.10, ratio 1.10-1.05, ratio 1.05-1.00 . remove any with ratio lower than 1
+# Convert these kmers to 15 component vector via 'kmer2atchley' function
+# Then work out average of each of the 5 Atchley factors for each position (1,2,3) of each kmer for each group . Then plot this (like (show picture)
+# Repeat for 3mers, 4mers and 5mers of each antigen (12 graphs in total)
+combine_data <- unlist(list(list_3mer, list_4mer, list_5mer), recursive = FALSE)
+
+imap(combine_data, function(data, name) {
+  
+  
+  data %>%
+    mutate(ratio = CoV_count/Control_count) %>%
+    filter(ratio >= 1) %>%
+    mutate(group = cut(ratio, c(1, seq(1.5, 2.5, 0.5), Inf), include.lowest = TRUE)) -> new_data
+  
+  plt <- ggplot(new_data, aes(group)) + geom_bar() 
+  ggsave(sprintf('%s_group_count.png', name), plt)
+  
+  
+  new_data <- bind_cols(new_data, map_df(new_data$kmer, kmer2atchley))
+  
+  new_data %>%
+    group_by(group) %>%
+    summarise(across(-(kmer:ratio), mean, na.rm = TRUE)) %>%
+    pivot_longer(cols = -group, 
+                 names_to = c('position', 'component'), 
+                 names_sep = '\\.') %>%
+    mutate(component = factor(component, c('pah', 'pss', 'ms', 'cc', 'ec'))) %>%
+    split(.$group) %>%
+    imap(~{
+      ggplot(.x) + aes(position, value, fill = position) + 
+        geom_col() + facet_wrap(~component, ncol = 5) + 
+        guides(fill = FALSE) + 
+        labs(title = paste0('Group : ', .y)) +
+        scale_fill_manual(values = c('1' = 'red', '2' = 'green', '3' = 'blue', '4' = 'purple', '5' = 'orange')) +
+        theme(axis.title.x = element_text(size = 14, face = "bold"),
+              axis.title.y = element_text(face = 'bold', size = 14),
+              axis.text.x = element_text(face="bold", size=11),
+              axis.text.y = element_text(face="bold", size=14), 
+              strip.text.x = element_text(face="bold", size=14)) -> tmp
+      ggsave(sprintf('%s_Group_%s.png', name, .y), tmp, width=3, height=3)
+    })
+  
+})
