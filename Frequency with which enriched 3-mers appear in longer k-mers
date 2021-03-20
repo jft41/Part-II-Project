@@ -1,0 +1,46 @@
+library(tidyverse)
+setwd("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Stem_3mer_plots_Overlapping_dataset")
+data <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Stem_3mer_plots_Overlapping_dataset/Csv_list_of_kmers_in_overlapping_dataset.csv")
+data1 <- data[, c(2, 3)]
+
+Adaptive_nonpos_4mers <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Kmers_into_Dkmers_Adaptive_dataset/p<0.05_adaptive_dkmers/plessthan0.05_nonpos4mers.csv") %>% select(kmer)
+Adaptive_nonpos_5mers <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Kmers_into_Dkmers_Adaptive_dataset/p<0.05_adaptive_dkmers/plessthan0.05_nonpos5mers.csv") %>% select(kmer)
+
+Immunity_nonpos_4mers <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Kmers_into_Dkmers_Immunity_dataset/p<0.05_immunity_dkmers/plessthan0.05_nonpos4mers_imm.csv") %>% select(kmer)
+Immunity_nonpos_5mers <- read_csv("/Users/juju7007thorn/OneDrive - University Of Cambridge/Y3 PATH/Project/Kmers_into_Dkmers_Immunity_dataset/p<0.05_immunity_dkmers/plessthan0.05_nonpos5mers_imm.csv") %>% select(kmer)
+
+lst(Adaptive_nonpos_4mers , 
+    Adaptive_nonpos_5mers, 
+    Immunity_nonpos_4mers, 
+    Immunity_nonpos_5mers) -> list_df
+unique_kmers <- unique(na.omit(data$`non-pos 3mers`))
+  
+lapply(list_df, function(x) {
+  sapply(unique_kmers, function(z) {
+    sum(grepl(z, x$kmer))
+  })
+}) %>%
+  bind_rows(.id = 'dataset') -> tmp
+
+tmp %>%
+  pivot_longer(cols = -dataset, values_to = 'perc') %>% 
+  group_by(dataset) %>%
+  mutate(perc = prop.table(perc) * 100) ->  dot_plot_info
+write_csv(dot_plot_info, 'dot_plot_csv.csv')
+
+
+  ggplot(dot_plot_info) + 
+  aes(dataset, name, size = perc, color = perc, group = name) + 
+  geom_point() +
+  labs(x = 'Class of Kmer', y = 'Non-positional 3mers', 
+       title=  'Presence of the stem 3mer in larger kmers ') -> dot_plot
+  
+
+  
+
+#scale_size(guide = 'none') 
+
+class(dot_plot)
+
+ggsave('3mer_dot_plot.png', dot_plot, width=4, height=8)
+
